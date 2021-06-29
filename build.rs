@@ -7,9 +7,9 @@ use cc::Build;
 
 fn main() {
     println!("xxxxxxxxxxxxxxx");
-    // build_net_devices();
+    build_net_devices();
     build_pcap_wrapper();
-    // link_pcap();
+    link_pcap();
 }
 
 fn is_dir(d: &OsStr) -> bool {

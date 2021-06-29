@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2017 click2stream, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod devices;
-pub mod ether;
-
-// #[cfg(feature = "discovery")]
-pub mod ip;
-
-// #[cfg(feature = "discovery")]
-pub mod arp;
-
-// #[cfg(feature = "discovery")]
-pub mod tcp;
-
-// #[cfg(feature = "discovery")]
-pub mod icmp;
-
-// #[cfg(feature = "discovery")]
-pub mod pcap;
-
-// #[cfg(feature = "discovery")]
-pub mod utils;
+pub mod reader;

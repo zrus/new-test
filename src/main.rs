@@ -1,20 +1,18 @@
-// mod net;
-// mod result;
+#[macro_use]
+extern crate lazy_static;
+
+mod net;
+mod scanner;
+mod svc_table;
+mod utils;
 
 use core::fmt;
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    fmt::{Display, Formatter},
-    fs::File,
-    io::BufRead,
-    io::BufReader,
-    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::{HashMap, HashSet}, error::Error, fmt::{Display, Formatter}, fs::File, io::BufRead, io::{self, BufReader}, net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4}, path::PathBuf, result, str::FromStr, sync::Arc, time::Duration};
+
+use net::raw::{devices::EthernetDevice, ether::MacAddr, pcap};
+use scanner::ScanResult;
+
+use crate::net::raw::{arp::scanner::Ipv4ArpScanner, icmp::scanner::IcmpScanner, tcp::scanner::{PortCollection, TcpPortScanner}};
 
 // use result::ScanResult;
 
@@ -26,6 +24,47 @@ const RTSP_PORT_CANDIDATES: &[u16] = &[554, 88, 81, 555, 7447, 8554, 7070, 10554
 
 const HR_FLAG_ARP: u8 = 0x01;
 const HR_FLAG_ICMP: u8 = 0x02;
+
+#[derive(Debug, Clone)]
+pub struct DiscoveryError {
+    msg: String,
+}
+
+impl DiscoveryError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+
+impl Error for DiscoveryError {}
+
+impl Display for DiscoveryError {
+    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+        f.write_str(&self.msg)
+    }
+}
+
+impl From<pcap::PcapError> for DiscoveryError {
+    fn from(err: pcap::PcapError) -> Self {
+        Self::new(format!("pcap error: {}", err))
+    }
+}
+
+impl From<io::Error> for DiscoveryError {
+    fn from(err: io::Error) -> Self {
+        Self::new(format!("IO error: {}", err))
+    }
+}
+
+/// Discovery result type alias.
+pub type Result<T> = result::Result<T, DiscoveryError>;
+
 
 fn main() {
     let rtsp_paths_file = PathBuf::from(RTSP_PATH_FILE);
@@ -57,110 +96,112 @@ fn main() {
         .enable_time()
         .build();
 
-    // let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
+    let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
 
-    // let mut report = find_open_ports();
+    let mut port_candidates = HashSet::<u16>::new();
+    port_candidates.extend(RTSP_PORT_CANDIDATES);
+    // port_candidates.extend(HTTP_PORT_CANDIDATES);
+
+    let mut report = find_open_ports(&port_candidates);
+
+    println!("Successfully");
 }
 
-// fn find_open_ports() -> ScanResult {
-//     let mut report = ScanResult::new();
+fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
+    let mut res = HashMap::new();
 
-//     let devices = EthernetDevice::list();
+    let len = ports.len();
 
-//     for dev in devices {
-//         let res = find_open_ports_in_network(scanner.clone(), &dev);
+    for (index, port) in ports.iter().enumerate() {
+        res.insert(*port, len - index);
+    }
 
-//         if let Err(err) = res {
-//             panic!(
-//                 "unable to find open ports in local network on interface {}: {}",
-//                 dev.name, err
-//             );
-//         } else if let Ok(res) = res {
-//             report.merge(res);
-//         }
-//     }
+    res
+}
 
-//     report
-// }
+fn find_open_ports(port_candidates: &HashSet::<u16>) -> ScanResult {
+    let mut report = ScanResult::new();
 
-// fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Result<ScanResult> {
-//     let mut logger = context.get_logger();
+    let devices = EthernetDevice::list();
 
-//     let mut report = ScanResult::new();
+    for dev in devices {
+        let res = find_open_ports_in_network(port_candidates, &dev);
 
-//     println!(
-//         "running ARP scan in local network on interface {}",
-//         device.name
-//     );
+        if let Err(err) = res {
+            println!(
+                "unable to find open ports in local network on interface {}: {}",
+                dev.name, err
+            );
+        } else if let Ok(res) = res {
+            report.merge(res);
+        }
+    }
 
-//     for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
-//         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
-//     }
+    report
+}
 
-//     println!(
-//         "running ICMP echo scan in local network on interface {}",
-//         device.name
-//     );
+fn find_open_ports_in_network(port_candidates: &HashSet::<u16>, device: &EthernetDevice) -> Result<ScanResult> {
+    let mut report = ScanResult::new();
 
-//     for (mac, ip) in IcmpScanner::scan_device(device)? {
-//         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
-//     }
+    println!(
+        "running ARP scan in local network on interface {}",
+        device.name
+    );
 
-//     let open_ports;
+    for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
+        report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
+    }
 
-//     {
-//         let hosts = report.hosts().map(|host| (host.mac, host.ip));
+    println!(
+        "running ICMP echo scan in local network on interface {}",
+        device.name
+    );
 
-//         open_ports = find_open_ports_on_hosts(context, device, hosts)?;
-//     }
+    for (mac, ip) in IcmpScanner::scan_device(device)? {
+        report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
+    }
 
-//     for (mac, addr) in open_ports {
-//         report.add_port(mac, addr.ip(), addr.port());
-//     }
+    let open_ports;
 
-//     Ok(report)
-// }
+    {
+        let hosts = report.hosts().map(|host| (host.mac, host.ip));
 
-// fn find_open_ports_on_hosts<I>(
-//     context: Context,
-//     device: &EthernetDevice,
-//     hosts: I,
-// ) -> Result<Vec<(MacAddr, SocketAddr)>>
-// where
-//     I: IntoIterator<Item = (MacAddr, IpAddr)>,
-// {
-//     let mut logger = context.get_logger();
+        open_ports = find_open_ports_on_hosts(port_candidates, device, hosts)?;
+    }
 
-//     println!(
-//         "running TCP port scan in local network on interface {}",
-//         device.name
-//     );
+    for (mac, addr) in open_ports {
+        report.add_port(mac, addr.ip(), addr.port());
+    }
 
-//     let hosts = hosts.into_iter().filter_map(|(mac, ip)| match ip {
-//         IpAddr::V4(ip) => Some((mac, ip)),
-//         _ => None,
-//     });
+    Ok(report)
+}
 
-//     let candidates = context.get_port_candidates().iter().cloned();
+fn find_open_ports_on_hosts<I>(
+    port_candidates: &HashSet::<u16>,
+    device: &EthernetDevice,
+    hosts: I,
+) -> Result<Vec<(MacAddr, SocketAddr)>>
+where
+    I: IntoIterator<Item = (MacAddr, IpAddr)>,
+{
+    println!(
+        "running TCP port scan in local network on interface {}",
+        device.name
+    );
 
-//     let ports = PortCollection::new().push_all(candidates);
+    let hosts = hosts.into_iter().filter_map(|(mac, ip)| match ip {
+        IpAddr::V4(ip) => Some((mac, ip)),
+        _ => None,
+    });
 
-//     let res = TcpPortScanner::scan_ipv4_hosts(device, hosts, &ports)?
-//         .into_iter()
-//         .map(|(mac, ip, p)| (mac, SocketAddr::V4(SocketAddrV4::new(ip, p))))
-//         .collect::<Vec<_>>();
+    let candidates = port_candidates.iter().cloned();
 
-//     Ok(res)
-// }
+    let ports = PortCollection::new().push_all(candidates);
 
-// fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
-//     let mut res = HashMap::new();
+    let res = TcpPortScanner::scan_ipv4_hosts(device, hosts, &ports)?
+        .into_iter()
+        .map(|(mac, ip, p)| (mac, SocketAddr::V4(SocketAddrV4::new(ip, p))))
+        .collect::<Vec<_>>();
 
-//     let len = ports.len();
-
-//     for (index, port) in ports.iter().enumerate() {
-//         res.insert(*port, len - index);
-//     }
-
-//     res
-// }
+    Ok(res)
+}

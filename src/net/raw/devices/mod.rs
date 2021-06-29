@@ -1,7 +1,27 @@
+// Copyright 2015 click2stream, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Ethernet device definitions.
+
+use std::slice;
+
 use std::net::Ipv4Addr;
 use std::os::raw::{c_char, c_void};
 
-use super::ether::MacAddr;
+use crate::utils;
+
+use crate::net::raw::ether::MacAddr;
 
 #[allow(non_camel_case_types)]
 type net_device = *mut c_void;
@@ -19,6 +39,7 @@ extern "C" {
     fn net_get_ipv4_addr_size() -> usize;
 }
 
+/// Ethernet device.
 #[derive(Clone, Debug)]
 pub struct EthernetDevice {
     pub name: String,
@@ -47,4 +68,47 @@ impl EthernetDevice {
 
         result
     }
+
+    /// Create a new ethernet device instance from its raw counterpart.
+    unsafe fn new(dev: net_device) -> Self {
+        Self {
+            name: get_name(dev),
+            mac_addr: get_mac_addr(dev),
+            ip_addr: get_ipv4_addr(dev),
+            netmask: get_ipv4_mask(dev),
+        }
+    }
+}
+
+/// Get device name.
+unsafe fn get_name(dev: net_device) -> String {
+    utils::cstr_to_string(net_get_name(dev) as *const i8)
+}
+
+/// Get device MAC address.
+unsafe fn get_mac_addr(dev: net_device) -> MacAddr {
+    let addr = net_get_mac_address(dev) as *const c_void;
+    let bytes = ptr_to_bytes(addr, net_get_mac_addr_size() as usize);
+
+    MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+}
+
+/// Get device IPv4 address.
+unsafe fn get_ipv4_addr(dev: net_device) -> Ipv4Addr {
+    let addr = net_get_ipv4_address(dev) as *const c_void;
+    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size() as usize);
+
+    Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+}
+
+/// Get device IPv4 mask.
+unsafe fn get_ipv4_mask(dev: net_device) -> Ipv4Addr {
+    let addr = net_get_ipv4_netmask(dev) as *const c_void;
+    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size() as usize);
+
+    Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+}
+
+unsafe fn ptr_to_bytes<'a>(ptr: *const c_void, len: usize) -> &'a [u8] {
+    slice::from_raw_parts(ptr as *const u8, len)
 }
