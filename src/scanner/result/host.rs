@@ -22,7 +22,7 @@ pub const HR_FLAG_ARP: u8 = 0x01;
 pub const HR_FLAG_ICMP: u8 = 0x02;
 
 /// Host record (i.e. a scan report element).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct HostRecord {
     pub flags: u8,
     pub mac: MacAddr,

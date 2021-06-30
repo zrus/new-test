@@ -157,6 +157,10 @@ fn main() {
     for svc in report.services() {
         println!("{:?}", svc);
     }
+
+    // for host in report.hosts() {
+    //     println!("{:?}", host);
+    // }
 }
 
 fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
