@@ -17,14 +17,14 @@ use svc_table::{Service, ServiceType};
 use crate::net::raw::{arp::scanner::Ipv4ArpScanner, icmp::scanner::IcmpScanner, tcp::scanner::{PortCollection, TcpPortScanner}};
 use crate::net::rtsp::Request as RtspRequest;
 use crate::net::rtsp::Response as RtspResponse;
-
-// use result::ScanResult;
+use crate::net::http::Request as HttpRequest;
+use crate::net::http::Response as HttpResponse;
 
 const RTSP_PATH_FILE: &str = "rtsp-paths";
-// const MJPEG_PATH_FILE: &str = "mjpeg-paths";
+const MJPEG_PATH_FILE: &str = "mjpeg-paths";
 
 const RTSP_PORT_CANDIDATES: &[u16] = &[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80, 6667];
-// const HTTP_PORT_CANDIDATES: &[u16] = &[80, 81, 8080, 8081, 8090];
+const HTTP_PORT_CANDIDATES: &[u16] = &[80, 81, 8080, 8081, 8090];
 
 const HR_FLAG_ARP: u8 = 0x01;
 const HR_FLAG_ICMP: u8 = 0x02;
@@ -95,6 +95,26 @@ impl From<RtspResponse> for StreamType {
     }
 }
 
+impl From<HttpResponse> for StreamType {
+    fn from(response: HttpResponse) -> Self {
+        let status_code = response.status_code();
+
+        if status_code == 200 {
+            if is_supported_mjpeg_service(&response) {
+                Self::Supported
+            } else {
+                Self::Unsupported
+            }
+        } else if status_code == 401 {
+            Self::Locked
+        } else if status_code == 404 {
+            Self::NotFound
+        } else {
+            Self::Error
+        }
+    }
+}
+
 /// Discovery result type alias.
 pub type Result<T> = result::Result<T, DiscoveryError>;
 
@@ -111,17 +131,17 @@ fn main() {
         }
     }
 
-    // let mjpeg_paths_file = PathBuf::from(MJPEG_PATH_FILE);
-    // let file = File::open(mjpeg_paths_file);
+    let mjpeg_paths_file = PathBuf::from(MJPEG_PATH_FILE);
+    let file = File::open(mjpeg_paths_file);
 
-    // let breader = BufReader::new(file.unwrap());
-    // let mut mjpeg_paths = Vec::new();
-    // for line in breader.lines() {
-    //     let path = line.unwrap();
-    //     if !path.starts_with('#') {
-    //         mjpeg_paths.push(path);
-    //     }
-    // }
+    let breader = BufReader::new(file.unwrap());
+    let mut mjpeg_paths = Vec::new();
+    for line in breader.lines() {
+        let path = line.unwrap();
+        if !path.starts_with('#') {
+            mjpeg_paths.push(path);
+        }
+    }
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -129,10 +149,11 @@ fn main() {
         .build().map_err(|err| DiscoveryError::new(format!("Async IO error: {}", err))).unwrap();
 
     let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
+    let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
 
     let mut port_candidates = HashSet::<u16>::new();
     port_candidates.extend(RTSP_PORT_CANDIDATES);
-    // port_candidates.extend(HTTP_PORT_CANDIDATES);
+    port_candidates.extend(HTTP_PORT_CANDIDATES);
 
     let mut report = find_open_ports(&port_candidates);
 
@@ -144,9 +165,20 @@ fn main() {
 
     let rtsp_streams = runtime.block_on(find_rtsp_streams(rtsp_services.into_iter(), &rtsp_paths));
 
+    let http_services =
+        runtime.block_on(find_http_services(report.socket_addrs()));
+
+    let http_services = filter_duplicit_services(http_services, &http_port_priorities);
+
+    let mjpeg_services = http_services.clone();
+
+    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(mjpeg_services.into_iter(), &mjpeg_paths));
+
+
     let mut hosts = HashSet::new();
 
     hosts.extend(get_hosts(&rtsp_streams));
+    hosts.extend(get_hosts(&mjpeg_streams));
 
     for svc in rtsp_streams {
         report.add_service(svc);
@@ -329,7 +361,7 @@ where I: IntoIterator<Item = (MacAddr, SocketAddr)> {
 
 async fn find_rtsp_streams<I>(rtsp_services: I, rtsp_paths: &Vec<String>) -> Vec<Service>
 where I: IntoIterator<Item = (MacAddr, SocketAddr)> {
-    println!("looking for RTSP stream");
+    println!("looking for RTSP streams");
 
     let futures = rtsp_services.into_iter().map(|(mac, addr)| find_rtsp_stream(mac, addr, rtsp_paths));
 
@@ -367,7 +399,7 @@ async fn get_rtsp_stream(
     match stream_type.await {
         StreamType::Supported => Some(Service::rtsp(mac, addr, path)),
         StreamType::Unsupported => Some(Service::unsupported_rtsp(mac, addr, path)),
-        StreamType::Locked => Some(Service::locked_rtsp(mac, addr, None)),
+        StreamType::Locked => Some(Service::locked_rtsp(mac, addr, Some(path))),
 
         _ => None,
     }
@@ -433,6 +465,17 @@ fn is_supported_rtsp_service(sdp: &[u8]) -> bool {
     }
 }
 
+fn is_supported_mjpeg_service(response: &HttpResponse) -> bool {
+    let ctype = response
+        .get_header_field_value("content-type")
+        .unwrap_or("")
+        .to_lowercase();
+
+    ctype.starts_with("multipart/x-mixed-replace")
+        || ctype.starts_with("image/jpeg")
+        || ctype.starts_with("image/jpg")
+}
+
 fn get_hosts(services: &[Service]) -> Vec<IpAddr> {
     let mut hosts = HashSet::new();
 
@@ -443,4 +486,81 @@ fn get_hosts(services: &[Service]) -> Vec<IpAddr> {
     }
 
     hosts.into_iter().collect::<_>()
+}
+
+async fn find_mjpeg_streams<I>(mjpeg_services: I, mjpeg_paths: &Vec<String>) -> Vec<Service>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
+    println!("looking for MJPEG streams");
+
+    let futures = mjpeg_services
+        .into_iter()
+        .map(|(mac, addr)| find_mjpeg_path(mac, addr, mjpeg_paths));
+
+    futures::future::join_all(futures)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+async fn find_mjpeg_path(mac: MacAddr, addr: SocketAddr, mjpeg_paths: &Vec<String>) -> Option<Service> {
+    for path in mjpeg_paths.iter() {
+        let service = get_mjpeg_stream(mac, addr, path);
+
+        if let Some(svc) = service.await {
+            return Some(svc);
+        }
+    }
+
+    None
+}
+
+async fn find_http_services<I>(open_ports: I) -> Vec<(MacAddr, SocketAddr)>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
+    println!("looking for HTTP services");
+
+    let filtered = filter_services(open_ports, |saddr| async move {
+        if HTTP_PORT_CANDIDATES.contains(&saddr.port()) {
+            is_http_service(saddr).await
+        } else {
+            false
+        }
+    });
+
+    filtered.await
+}
+
+async fn get_mjpeg_stream(
+    mac: MacAddr,
+    addr: SocketAddr,
+    path: &str,
+) -> Option<Service> {
+    let path = path.to_string();
+
+    get_http_response(addr, &path)
+        .await
+        .map(|response| match StreamType::from(response) {
+            StreamType::Supported => Some(Service::mjpeg(mac, addr, path)),
+            StreamType::Locked => Some(Service::locked_mjpeg(mac, addr, None)),
+
+            _ => None,
+        })
+        .unwrap_or(None)
+}
+
+async fn is_http_service(addr: SocketAddr) -> bool {
+    get_http_response(addr, "/").await.is_ok()
+}
+
+async fn get_http_response(addr: SocketAddr, path: &str) -> Result<HttpResponse> {
+    HttpRequest::get_header(&format!("http://{}{}", addr, path))
+        .map_err(|err| DiscoveryError::new(format!("HTTP client error: {}", err)))?
+        .set_request_timeout(Some(Duration::from_millis(2000)))
+        .send()
+        .await
+        .map_err(|err| DiscoveryError::new(format!("HTTP client error: {}", err)))
 }
