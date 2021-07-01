@@ -1,6 +1,7 @@
 use std::env;
 
 use std::ffi::{OsStr, OsString};
+use std::os as os_imp;
 use std::path::Path;
 
 use cc::Build;
@@ -38,9 +39,26 @@ fn flag_from_var(flag_var: &str) -> Option<bool> {
     env::var_os(flag_var).map(|v| &v.to_string_lossy() != "0")
 }
 
+// fn flag_from_str(flag_str: &str) -> Option<bool> {
+//     let flag_dir = OsStr::new(flag_str);
+//     env::var_os(flag_dir).map(|v| &v.to_string_lossy() != "0")
+// }
+
 fn dir_from_var(var: &str) -> Option<OsString> {
     if let Some(dir) = env::var_os(var) {
         if is_dir(&dir) {
+            return Some(dir);
+        }
+    }
+
+    None
+}
+
+fn dir_from_str(str: &str) -> Option<OsString> {
+    let dir = OsStr::new(str);
+    if let Some(dir) = env::var_os(dir) {
+        if is_dir(&dir) {
+            println!("Is dirrrrrrrrrrrrrrrrrrrr");
             return Some(dir);
         }
     }
@@ -54,7 +72,9 @@ fn get_platform() -> &'static str {
         _ if cfg!(target_os = "windows") => "windows",
         _ if cfg!(target_os = "macos") => "macos",
         _ => panic!("Unsupported OS"),
-    }
+    };
+
+    "windows"
 }
 
 fn build_net_devices() {
@@ -81,7 +101,7 @@ fn build_pcap_wrapper() {
             for include in lib.include_paths {
                 wrapper_builder.include(include);
             }
-        } else if let Some(dir) = dir_from_var("WINPCAP_INCLUDE_DIR") {
+        } else if let Some(dir) = dir_from_str("C:/Program Files (x86)/WinPcap") {
             // if vcpkg cannot find the lib, we try the env. variable
             wrapper_builder.include(dir);
         }
@@ -110,7 +130,7 @@ fn link_pcap() {
 
         // if vcpkg cannot find the lib, we try the env. variables
         if lib.is_err() {
-            if let Some(dir) = dir_from_var("WINPCAP_LIB_DIR") {
+            if let Some(dir) = dir_from_str("C:/Program Files (x86)/WinPcap") {
                 emit_lib_path(&dir);
             }
 

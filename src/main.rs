@@ -7,18 +7,38 @@ mod svc_table;
 mod utils;
 
 use core::fmt;
-use std::{collections::{HashMap, HashSet}, error::Error, fmt::{Display, Formatter}, fs::File, io::BufRead, io::{self, BufReader}, net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6}, path::PathBuf, result, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt::{Display, Formatter},
+    fs::File,
+    io::BufRead,
+    io::{self, BufReader},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    path::PathBuf,
+    result,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use futures::{Future, FutureExt};
-use net::{raw::{devices::EthernetDevice, ether::MacAddr, pcap}, rtsp::sdp::{FromAttribute, MediaType, RTPMap, SessionDescription}};
+use net::{
+    raw::{devices::EthernetDevice, ether::MacAddr, pcap},
+    rtsp::sdp::{FromAttribute, MediaType, RTPMap, SessionDescription},
+};
 use scanner::ScanResult;
 use svc_table::{Service, ServiceType};
 
-use crate::net::raw::{arp::scanner::Ipv4ArpScanner, icmp::scanner::IcmpScanner, tcp::scanner::{PortCollection, TcpPortScanner}};
-use crate::net::rtsp::Request as RtspRequest;
-use crate::net::rtsp::Response as RtspResponse;
 use crate::net::http::Request as HttpRequest;
 use crate::net::http::Response as HttpResponse;
+use crate::net::raw::{
+    arp::scanner::Ipv4ArpScanner,
+    icmp::scanner::IcmpScanner,
+    tcp::scanner::{PortCollection, TcpPortScanner},
+};
+use crate::net::rtsp::Request as RtspRequest;
+use crate::net::rtsp::Response as RtspResponse;
 
 const RTSP_PATH_FILE: &str = "rtsp-paths";
 const MJPEG_PATH_FILE: &str = "mjpeg-paths";
@@ -146,7 +166,9 @@ fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
-        .build().map_err(|err| DiscoveryError::new(format!("Async IO error: {}", err))).unwrap();
+        .build()
+        .map_err(|err| DiscoveryError::new(format!("Async IO error: {}", err)))
+        .unwrap();
 
     let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
     let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
@@ -165,15 +187,14 @@ fn main() {
 
     let rtsp_streams = runtime.block_on(find_rtsp_streams(rtsp_services.into_iter(), &rtsp_paths));
 
-    let http_services =
-        runtime.block_on(find_http_services(report.socket_addrs()));
+    let http_services = runtime.block_on(find_http_services(report.socket_addrs()));
 
     let http_services = filter_duplicit_services(http_services, &http_port_priorities);
 
     let mjpeg_services = http_services.clone();
 
-    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(mjpeg_services.into_iter(), &mjpeg_paths));
-
+    let mjpeg_streams =
+        runtime.block_on(find_mjpeg_streams(mjpeg_services.into_iter(), &mjpeg_paths));
 
     let mut hosts = HashSet::new();
 
@@ -207,7 +228,7 @@ fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
     res
 }
 
-fn find_open_ports(port_candidates: &HashSet::<u16>) -> ScanResult {
+fn find_open_ports(port_candidates: &HashSet<u16>) -> ScanResult {
     let mut report = ScanResult::new();
 
     let devices = EthernetDevice::list();
@@ -228,7 +249,10 @@ fn find_open_ports(port_candidates: &HashSet::<u16>) -> ScanResult {
     report
 }
 
-fn find_open_ports_in_network(port_candidates: &HashSet::<u16>, device: &EthernetDevice) -> Result<ScanResult> {
+fn find_open_ports_in_network(
+    port_candidates: &HashSet<u16>,
+    device: &EthernetDevice,
+) -> Result<ScanResult> {
     let mut report = ScanResult::new();
 
     println!(
@@ -265,7 +289,7 @@ fn find_open_ports_in_network(port_candidates: &HashSet::<u16>, device: &Etherne
 }
 
 fn find_open_ports_on_hosts<I>(
-    port_candidates: &HashSet::<u16>,
+    port_candidates: &HashSet<u16>,
     device: &EthernetDevice,
     hosts: I,
 ) -> Result<Vec<(MacAddr, SocketAddr)>>
@@ -295,7 +319,8 @@ where
 }
 
 async fn find_rtsp_services<I>(open_ports: I) -> Vec<(MacAddr, SocketAddr)>
-where I: IntoIterator<Item = (MacAddr, SocketAddr)>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
     println!("looking for RTSP services");
 
@@ -305,22 +330,34 @@ where I: IntoIterator<Item = (MacAddr, SocketAddr)>
         } else {
             false
         }
-    }) ;
+    });
 
     filtered.await
 }
 
-async fn filter_services<I, P, F>(candidates: I, predicate: P,) -> Vec<(MacAddr, SocketAddr)> 
-where I: IntoIterator<Item = (MacAddr, SocketAddr)>, P: Fn(SocketAddr) -> F, F: Future<Output = bool>, {
-    let futures = candidates.into_iter().map(|(mac, saddr)| predicate(saddr).map(move |res| (mac, saddr, res)));
+async fn filter_services<I, P, F>(candidates: I, predicate: P) -> Vec<(MacAddr, SocketAddr)>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+    P: Fn(SocketAddr) -> F,
+    F: Future<Output = bool>,
+{
+    let futures = candidates
+        .into_iter()
+        .map(|(mac, saddr)| predicate(saddr).map(move |res| (mac, saddr, res)));
 
-    futures::future::join_all(futures).await.into_iter().filter_map(|(mac, saddr, res)| {
-        if res {
-            Some((mac, saddr))
-        } else {
-            None
-        }
-    }).collect()
+    futures::future::join_all(futures)
+        .await
+        .into_iter()
+        .filter_map(
+            |(mac, saddr, res)| {
+                if res {
+                    Some((mac, saddr))
+                } else {
+                    None
+                }
+            },
+        )
+        .collect()
 }
 
 async fn is_rtsp_service(addr: SocketAddr) -> bool {
@@ -330,43 +367,63 @@ async fn is_rtsp_service(addr: SocketAddr) -> bool {
         return false;
     }
 
-    request.unwrap().set_request_timeout(Some(Duration::from_millis(2000))).send().await.is_ok()
+    request
+        .unwrap()
+        .set_request_timeout(Some(Duration::from_millis(2000)))
+        .send()
+        .await
+        .is_ok()
 }
 
-fn filter_duplicit_services<I>(services: I, port_priorities: &HashMap<u16, usize>) -> Vec<(MacAddr, SocketAddr)>
-where I: IntoIterator<Item = (MacAddr, SocketAddr)> {
+fn filter_duplicit_services<I>(
+    services: I,
+    port_priorities: &HashMap<u16, usize>,
+) -> Vec<(MacAddr, SocketAddr)>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     let mut svc_map = HashMap::new();
 
     for (mac, saddr) in services {
         let ip = saddr.ip();
         let port = saddr.port();
 
-        svc_map.entry(ip).and_modify(|v| {
-            let &mut (_, _, old_port) = v;
+        svc_map
+            .entry(ip)
+            .and_modify(|v| {
+                let &mut (_, _, old_port) = v;
 
-            let old_priority = port_priorities.get(&old_port).cloned().unwrap_or(0);
-            let new_priority = port_priorities.get(&port).cloned().unwrap_or(0);
+                let old_priority = port_priorities.get(&old_port).cloned().unwrap_or(0);
+                let new_priority = port_priorities.get(&port).cloned().unwrap_or(0);
 
-            if new_priority > old_priority {
-                *v = (mac, ip, port);
-            }
-        }).or_insert((mac, ip, port));
+                if new_priority > old_priority {
+                    *v = (mac, ip, port);
+                }
+            })
+            .or_insert((mac, ip, port));
     }
 
-    svc_map.into_iter().map(|(_, (mac, ip, port))| match ip {
-        IpAddr::V4(ip) => (mac, SocketAddr::V4(SocketAddrV4::new(ip, port))),
-        IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))),
-    }).collect::<_>()
+    svc_map
+        .into_iter()
+        .map(|(_, (mac, ip, port))| match ip {
+            IpAddr::V4(ip) => (mac, SocketAddr::V4(SocketAddrV4::new(ip, port))),
+            IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))),
+        })
+        .collect::<_>()
 }
 
 async fn find_rtsp_streams<I>(rtsp_services: I, rtsp_paths: &Vec<String>) -> Vec<Service>
-where I: IntoIterator<Item = (MacAddr, SocketAddr)> {
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     println!("looking for RTSP streams");
 
-    let futures = rtsp_services.into_iter().map(|(mac, addr)| find_rtsp_stream(mac, addr, rtsp_paths));
+    let futures = rtsp_services
+        .into_iter()
+        .map(|(mac, addr)| find_rtsp_stream(mac, addr, rtsp_paths));
 
     futures::future::join_all(futures).await
-} 
+}
 
 async fn find_rtsp_stream(mac: MacAddr, addr: SocketAddr, rtsp_paths: &Vec<String>) -> Service {
     let mut res = Service::unknown_rtsp(mac, addr);
@@ -375,7 +432,8 @@ async fn find_rtsp_stream(mac: MacAddr, addr: SocketAddr, rtsp_paths: &Vec<Strin
         let service = get_rtsp_stream(mac, addr, path);
 
         if let Some(svc) = service.await {
-            if svc.service_type() == ServiceType::RTSP || svc.service_type() == ServiceType::LockedRTSP
+            if svc.service_type() == ServiceType::RTSP
+                || svc.service_type() == ServiceType::LockedRTSP
             {
                 return svc;
             } else {
@@ -387,11 +445,7 @@ async fn find_rtsp_stream(mac: MacAddr, addr: SocketAddr, rtsp_paths: &Vec<Strin
     res
 }
 
-async fn get_rtsp_stream(
-    mac: MacAddr,
-    addr: SocketAddr,
-    path: &str,
-) -> Option<Service> {
+async fn get_rtsp_stream(mac: MacAddr, addr: SocketAddr, path: &str) -> Option<Service> {
     let path = path.to_string();
 
     let stream_type = get_rtsp_stream_type(addr, &path);
@@ -505,7 +559,11 @@ where
         .collect()
 }
 
-async fn find_mjpeg_path(mac: MacAddr, addr: SocketAddr, mjpeg_paths: &Vec<String>) -> Option<Service> {
+async fn find_mjpeg_path(
+    mac: MacAddr,
+    addr: SocketAddr,
+    mjpeg_paths: &Vec<String>,
+) -> Option<Service> {
     for path in mjpeg_paths.iter() {
         let service = get_mjpeg_stream(mac, addr, path);
 
@@ -534,11 +592,7 @@ where
     filtered.await
 }
 
-async fn get_mjpeg_stream(
-    mac: MacAddr,
-    addr: SocketAddr,
-    path: &str,
-) -> Option<Service> {
+async fn get_mjpeg_stream(mac: MacAddr, addr: SocketAddr, path: &str) -> Option<Service> {
     let path = path.to_string();
 
     get_http_response(addr, &path)
