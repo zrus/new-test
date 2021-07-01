@@ -16,6 +16,8 @@ fs2          = "0.4"
 json         = "0.12"
 openssl      = "0.10"
 time         = "0.1"
+tide         = "*"
+
 
 [dependencies.futures]
 version = "0.3"

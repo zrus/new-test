@@ -72,9 +72,9 @@ fn get_platform() -> &'static str {
         _ if cfg!(target_os = "windows") => "windows",
         _ if cfg!(target_os = "macos") => "macos",
         _ => panic!("Unsupported OS"),
-    };
+    }
 
-    "windows"
+    // "windows"
 }
 
 fn build_net_devices() {

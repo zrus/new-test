@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+mod actor;
 mod net;
 mod scanner;
 mod svc_table;
